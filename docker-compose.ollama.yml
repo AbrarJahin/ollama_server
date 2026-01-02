@@ -11,15 +11,21 @@ services:
     volumes:
       - ./ollama_data:/root/.ollama
 
-    # NVIDIA GPU support (Docker + NVIDIA toolkit required)
-    gpus: all
+    # NVIDIA GPU support (your Compose requires a LIST of MAPPINGS)
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-    # IMPORTANT: override the default ENTRYPOINT ("ollama") so we can run a shell script
-    entrypoint: ["/bin/sh", "-lc"]
+    # Override ENTRYPOINT ("ollama") so we can run a shell script
+    entrypoint:
+      - /bin/sh
+      - -lc
 
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
@@ -27,25 +33,22 @@ services:
       timeout: 5s
       retries: 10
 
+    # IMPORTANT: use $$ to prevent Compose from substituting $MARKER and $pid
     command: |
       MARKER=/root/.ollama/.models_initialized
 
-      # Start server in background
       ollama serve &
-      pid=$!
+      pid=$$!
 
-      # Give server a moment to come up
       sleep 2
 
-      # Pull models only once (persisted because /root/.ollama is bind-mounted)
-      if [ ! -f "$MARKER" ]; then
+      if [ ! -f "$$MARKER" ]; then
         echo "First run: pulling default models..."
         ollama pull qwen2.5:14b-instruct
         ollama pull bge-m3
-        touch "$MARKER"
+        touch "$$MARKER"
       else
         echo "Models already initialized; skipping pulls."
       fi
 
-      # Keep container alive by waiting on server process
-      wait $pid
+      wait $$pid
