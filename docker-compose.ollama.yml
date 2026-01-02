@@ -4,19 +4,24 @@ services:
     container_name: ollama
     restart: unless-stopped
 
-    # Expose API to host (FastAPI on host or other machines if you choose)
     ports:
       - "11434:11434"
 
-    # Persist models inside a Docker volume (no host clutter)
     volumes:
-      - ollama_data:/root/.ollama
+      - ./ollama_data:/root/.ollama
 
-    # Important: inside Docker you typically want to bind to 0.0.0.0
-    # Ollama defaults to 127.0.0.1:11434 in many installs, but you can set OLLAMA_HOST.
-    # Docs mention changing bind address with OLLAMA_HOST. :contentReference[oaicite:2]{index=2}
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
     healthcheck:
       test: ["CMD", "bash", "-lc", "ollama list >/dev/null 2>&1 || exit 1"]
@@ -24,6 +29,21 @@ services:
       timeout: 5s
       retries: 10
 
-volumes:
-  ollama_data:
-    name: ollama_data
+    command: >
+      sh -c "
+        MARKER=/root/.ollama/.models_initialized;
+        ollama serve &
+        pid=$!;
+        sleep 2;
+
+        if [ ! -f \"$MARKER\" ]; then
+          echo 'First run: pulling default models...';
+          ollama pull qwen2.5:14b-instruct;
+          ollama pull bge-m3;
+          touch \"$MARKER\";
+        else
+          echo 'Models already initialized; skipping pulls.';
+        fi;
+
+        wait $pid
+      "
