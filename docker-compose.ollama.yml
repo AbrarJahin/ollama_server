@@ -7,48 +7,88 @@ services:
     ports:
       - "11434:11434"
 
-    # Keep all models/data beside your code (e.g., on D:\...)
+    # Store models beside your code
     volumes:
       - ./ollama_data:/root/.ollama
 
-    # NVIDIA GPU support (your Compose requires a LIST of MAPPINGS)
+    environment:
+      # Listen on all interfaces inside container
+      - OLLAMA_HOST=0.0.0.0:11434
+
+      # --- Force NVIDIA usage / avoid iGPU confusion ---
+      # Pick GPU 1 (your RTX A4000) explicitly.
+      # If Docker enumerates differently on your system, change to "0" or run nvidia-smi in container to confirm.
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+      # --- Performance/concurrency knobs ---
+      # Use many CPU threads for preprocessing/scheduling.
+      # Your i9-11950H has 8C/16T -> 16 is a good max.
+      - OLLAMA_NUM_THREADS=16
+
+      # How many requests can be processed in parallel.
+      # Start with 2. Increase to 3-4 only if VRAM allows and you really need concurrency.
+      - OLLAMA_MAX_LOADED_MODELS=2
+      - OLLAMA_MAX_QUEUE=512
+
+      # Keep model in memory longer (reduces reload thrash).
+      # Use a duration string like "10m", "30m", "1h". (If unsupported in your version, remove.)
+      - OLLAMA_KEEP_ALIVE=30m
+
+    # Ensure GPU access (compose v2)
     gpus:
       - driver: nvidia
         count: all
         capabilities: [gpu]
 
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    # Reduce container-level bottlenecks
+    shm_size: "8gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+      nofile:
+        soft: 1048576
+        hard: 1048576
 
-    # Override ENTRYPOINT ("ollama") so we can run a shell script
-    entrypoint:
-      - /bin/sh
-      - -lc
+    command: ["serve"]
 
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+  ollama-init:
+    image: curlimages/curl:8.5.0
+    container_name: ollama-init
+    depends_on:
+      - ollama
 
-    # IMPORTANT: use $$ to prevent Compose from substituting $MARKER and $pid
-    command: |
-      MARKER=/root/.ollama/.models_initialized
+    volumes:
+      - ./ollama_data:/data
 
-      ollama serve &
-      pid=$$!
+    restart: "no"
 
-      sleep 2
+    command: >
+      sh -lc '
+        MARKER=/data/.models_initialized;
 
-      if [ ! -f "$$MARKER" ]; then
-        echo "First run: pulling default models..."
-        ollama pull qwen2.5:14b-instruct
-        ollama pull bge-m3
-        touch "$$MARKER"
-      else
-        echo "Models already initialized; skipping pulls."
-      fi
+        if [ -f "$$MARKER" ]; then
+          echo "Models already initialized; skipping pulls.";
+          exit 0;
+        fi;
 
-      wait $$pid
+        echo "Waiting for Ollama API...";
+        for i in $$(seq 1 120); do
+          curl -fsS http://ollama:11434/api/tags >/dev/null 2>&1 && break;
+          sleep 1;
+        done;
+
+        echo "Pulling qwen2.5:14b-instruct...";
+        curl -fsS -X POST http://ollama:11434/api/pull \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"qwen2.5:14b-instruct\"}" >/dev/null;
+
+        echo "Pulling bge-m3...";
+        curl -fsS -X POST http://ollama:11434/api/pull \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"bge-m3\"}" >/dev/null;
+
+        touch "$$MARKER";
+        echo "Model init complete.";
+      '
