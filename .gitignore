@@ -1,0 +1,41 @@
+# --- Ollama local data (models, blobs, cache) ---
+ollama_data/
+**/.models_initialized
+
+# --- Logs ---
+*.log
+logs/
+*.out
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Node / JS (if you add a frontend later) ---
+node_modules/
+.next/
+dist/
+build/
+
+# --- Python (if you add FastAPI later) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.coverage
+htmlcov/
+
+# --- Docker local overrides ---
+docker-compose.override.yml
+
+# --- Secrets / env files ---
+.env
+.env.*
+!.env.example
