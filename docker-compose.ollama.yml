@@ -7,43 +7,45 @@ services:
     ports:
       - "11434:11434"
 
+    # Keep all models/data beside your code (e.g., on D:\...)
     volumes:
       - ./ollama_data:/root/.ollama
 
+    # NVIDIA GPU support (Docker + NVIDIA toolkit required)
+    gpus: all
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # IMPORTANT: override the default ENTRYPOINT ("ollama") so we can run a shell script
+    entrypoint: ["/bin/sh", "-lc"]
 
     healthcheck:
-      test: ["CMD", "bash", "-lc", "ollama list >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
 
-    command: >
-      sh -c "
-        MARKER=/root/.ollama/.models_initialized;
-        ollama serve &
-        pid=$!;
-        sleep 2;
+    command: |
+      MARKER=/root/.ollama/.models_initialized
 
-        if [ ! -f \"$MARKER\" ]; then
-          echo 'First run: pulling default models...';
-          ollama pull qwen2.5:14b-instruct;
-          ollama pull bge-m3;
-          touch \"$MARKER\";
-        else
-          echo 'Models already initialized; skipping pulls.';
-        fi;
+      # Start server in background
+      ollama serve &
+      pid=$!
 
-        wait $pid
-      "
+      # Give server a moment to come up
+      sleep 2
+
+      # Pull models only once (persisted because /root/.ollama is bind-mounted)
+      if [ ! -f "$MARKER" ]; then
+        echo "First run: pulling default models..."
+        ollama pull qwen2.5:14b-instruct
+        ollama pull bge-m3
+        touch "$MARKER"
+      else
+        echo "Models already initialized; skipping pulls."
+      fi
+
+      # Keep container alive by waiting on server process
+      wait $pid
